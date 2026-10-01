@@ -204,8 +204,13 @@ function substituteFilters(
   sql: string,
   filters: Record<string, unknown>,
 ): string {
-  return sql.replace(/\{\{\s*filters\.(\w+)\s*\}\}/g, (_match, key) => {
-    const value = filters[key];
+  return sql.replace(/\{\{\s*filters\.([\w.]+)\s*\}\}/g, (_match, key) => {
+    const parts = key.split(".");
+    let value: unknown = filters;
+    for (const part of parts) {
+      if (value === null || value === undefined) break;
+      value = (value as Record<string, unknown>)[part];
+    }
     if (value === undefined || value === null) return "NULL";
     if (Array.isArray(value)) {
       if (value.length === 0) return "NULL";
