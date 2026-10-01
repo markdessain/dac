@@ -19,6 +19,7 @@
     "react": "^19.2.4",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.4",
+    "@duckdb/duckdb-wasm": "^1.29.0",
     "react-is": "^19.2.4",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
@@ -31,6 +32,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
+    "@shikijs/langs": "^4.4.3",
+    "@shikijs/themes": "^4.4.3",
     "@tailwindcss/vite": "^4.2.1",
     "@types/d3-format": "^3.0.4",
     "@types/d3-time-format": "^4.0.3",

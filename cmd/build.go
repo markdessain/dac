@@ -37,6 +37,11 @@ func buildCmd() *cli.Command {
 				Name:  "filters",
 				Usage: "JSON string with filter overrides",
 			},
+			&cli.BoolFlag{
+				Name:  "dynamic",
+				Usage: "Build in dynamic mode: query base tables and save as Parquet instead of embedding widget data",
+				Value: false,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			dir, err := dashboardDirFromCommand(cmd)
@@ -61,6 +66,7 @@ func buildCmd() *cli.Command {
 				ConfigFile:   configFile,
 				Environment:  cmd.Root().String("environment"),
 				Frontend:     frontendFS,
+				Dynamic:      cmd.Bool("dynamic"),
 			})
 		},
 	}

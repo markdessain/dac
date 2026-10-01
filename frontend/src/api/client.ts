@@ -10,8 +10,11 @@ export interface StaticPayload {
   config: ServerConfig;
   dashboard: Dashboard;
   dashboards: DashboardSummary[];
-  widgetData: Record<string, WidgetData>;
+  widgetData?: Record<string, WidgetData>;
   filters: Record<string, unknown>;
+  tables?: Record<string, string>;
+  queries?: Record<string, string>;
+  rawQueries?: Record<string, string>;
 }
 
 export function getStaticPayload(): StaticPayload | undefined {
@@ -68,7 +71,19 @@ export async function fetchDashboardData(
   filters?: Record<string, unknown>,
 ): Promise<Record<string, WidgetData>> {
   const sp = getStaticPayload();
-  if (sp) return sp.widgetData;
+  if (sp?.widgetData) return sp.widgetData;
+
+  if (sp?.tables && sp?.queries) {
+    const { initDuckDBDynamic, executeWidgetQuery } = await import("../lib/duckdb");
+    await initDuckDBDynamic(sp.tables);
+    const results: Record<string, WidgetData> = {};
+    for (const [id, sql] of Object.entries(sp.queries)) {
+      const rawSql = sp.rawQueries?.[id] ?? sql;
+      results[id] = await executeWidgetQuery(rawSql, filters ?? {});
+    }
+    return results;
+  }
+
   const data = await fetchJSON<BatchDataResponse>(
     `${BASE}/dashboards/${encodeURIComponent(name)}/data`,
     {
@@ -93,12 +108,39 @@ export function streamDashboardData(
 ): () => void {
   // In static mode, synchronously emit baked data.
   const sp = getStaticPayload();
-  if (sp) {
+  if (sp?.widgetData) {
     for (const [id, data] of Object.entries(sp.widgetData)) {
       onWidget(id, data);
     }
     onDone();
     return () => {};
+  }
+
+  if (sp?.tables && sp?.queries) {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const { initDuckDBDynamic, executeWidgetQuery } = await import("../lib/duckdb");
+        await initDuckDBDynamic(sp.tables);
+        for (const [id, sql] of Object.entries(sp.queries)) {
+          if (controller.signal.aborted) break;
+          let rawSql = sp.rawQueries?.[id];
+          if (rawSql && (rawSql.includes("{%") || rawSql.includes("|"))) {
+            rawSql = sql;
+          }
+          if (!rawSql) rawSql = sql;
+          const data = await executeWidgetQuery(rawSql, filters ?? {});
+          onWidget(id, data);
+        }
+        if (!controller.signal.aborted) {
+          onDone();
+        }
+      } catch (err) {
+        if ((err as DOMException)?.name === "AbortError") return;
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    })();
+    return () => controller.abort();
   }
 
   const controller = new AbortController();
@@ -165,7 +207,26 @@ export async function fetchWidgetData(
   filters?: Record<string, unknown>,
 ): Promise<WidgetData> {
   const sp = getStaticPayload();
-  if (sp) return sp.widgetData[widgetId];
+  if (sp?.widgetData) return sp.widgetData[widgetId];
+
+  if (sp?.tables && sp?.queries) {
+    const { initDuckDBDynamic, executeWidgetQuery } = await import("../lib/duckdb");
+    await initDuckDBDynamic(sp.tables);
+
+    let rawSql = sp.rawQueries?.[widgetId];
+    if (rawSql && (rawSql.includes("{%") || rawSql.includes("|"))) {
+      console.warn(
+        "[client] Raw SQL has unsupported Jinja syntax, falling back to rendered SQL for",
+        widgetId,
+      );
+      rawSql = sp.queries?.[widgetId];
+    }
+    if (!rawSql) rawSql = sp.queries?.[widgetId];
+    if (!rawSql) throw new Error(`No query found for widget ${widgetId}`);
+
+    return executeWidgetQuery(rawSql, filters ?? {});
+  }
+
   return fetchJSON<WidgetData>(
     `${BASE}/dashboards/${encodeURIComponent(dashboardName)}/widgets/${encodeURIComponent(widgetId)}/query`,
     {

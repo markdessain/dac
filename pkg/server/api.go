@@ -16,8 +16,12 @@ import (
 
 // WidgetJob represents a single SQL query to execute for a dashboard widget.
 type WidgetJob struct {
-	ID         string
-	SQL        string
+	ID  string
+	SQL string
+	// RawSQL is the template before Jinja rendering. It is only populated
+	// for regular widgets (not semantic or inline) so the frontend can
+	// re-render with different filter values in dynamic mode.
+	RawSQL     string
 	Connection string
 	// InlineData, when set, is returned directly without executing SQL — the
 	// widget carries static data and needs no connection.
@@ -27,6 +31,10 @@ type WidgetJob struct {
 	// names (e.g. "customers.country" -> "customers_country"); this restores
 	// the dashboard-facing name so widgets resolve the column.
 	ColumnRenames map[string]string
+	// BaseTables are the underlying tables referenced by the query (CTEs
+	// excluded). Populated by resolveWidgetJob so it is available during
+	// execution and in the rendered payload.
+	BaseTables []string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -139,9 +147,10 @@ type WidgetQueryResult struct {
 		Name string `json:"name"`
 		Type string `json:"type,omitempty"`
 	} `json:"columns"`
-	Rows  [][]any `json:"rows"`
-	Query string  `json:"query,omitempty"`
-	Error string  `json:"error,omitempty"`
+	Rows   [][]any  `json:"rows"`
+	Query  string   `json:"query,omitempty"`
+	Error  string   `json:"error,omitempty"`
+	Tables []string `json:"tables,omitempty"`
 }
 
 func (s *Server) handleBatchQuery(w http.ResponseWriter, r *http.Request) {
@@ -296,7 +305,7 @@ func resolveWidgetJob(d *dashboard.Dashboard, filters map[string]any, id string,
 	}
 
 	if widget.HasInlineData() {
-		return &WidgetJob{ID: id, InlineData: widget.Data}, nil
+		return &WidgetJob{ID: id, InlineData: widget.Data, RawSQL: ""}, nil
 	}
 
 	if semanticJob, handled, err := d.ResolveWidgetSemanticJob(widget); err != nil {
@@ -306,7 +315,7 @@ func resolveWidgetJob(d *dashboard.Dashboard, filters map[string]any, id string,
 		if err != nil {
 			return nil, fmt.Errorf("widget %q: %w", widget.Name, err)
 		}
-		return &WidgetJob{ID: id, SQL: sql, Connection: conn, ColumnRenames: renames}, nil
+		return &WidgetJob{ID: id, SQL: sql, RawSQL: "", Connection: conn, ColumnRenames: renames, BaseTables: query.ExtractBaseTables(sql)}, nil
 	}
 
 	sql, conn, err := widget.ResolvedQuery(d)
@@ -317,6 +326,7 @@ func resolveWidgetJob(d *dashboard.Dashboard, filters map[string]any, id string,
 		return nil, nil
 	}
 
+	rawSql := sql
 	// Always render: even with no filters, SQL may reference the `bruin`
 	// namespace (e.g. {{ bruin.user_email }}). Render() short-circuits
 	// templates with no placeholders.
@@ -324,7 +334,7 @@ func resolveWidgetJob(d *dashboard.Dashboard, filters map[string]any, id string,
 	if err != nil {
 		return nil, fmt.Errorf("template error: %w", err)
 	}
-	return &WidgetJob{ID: id, SQL: sql, Connection: conn}, nil
+	return &WidgetJob{ID: id, SQL: sql, RawSQL: rawSql, Connection: conn, BaseTables: query.ExtractBaseTables(sql)}, nil
 }
 
 // ExecuteWidgetQuery runs a single widget SQL query against the given backend.
@@ -346,12 +356,13 @@ func ExecuteWidgetQuery(ctx context.Context, backend query.Backend, j WidgetJob)
 
 	qr, err := backend.Execute(ctx, j.Connection, j.SQL)
 	if err != nil {
-		return &WidgetQueryResult{Query: j.SQL, Error: err.Error()}
+		return &WidgetQueryResult{Query: j.SQL, Error: err.Error(), Tables: j.BaseTables}
 	}
 
 	wr := &WidgetQueryResult{
-		Rows:  make([][]any, len(qr.Rows)),
-		Query: j.SQL,
+		Rows:   make([][]any, len(qr.Rows)),
+		Query:  j.SQL,
+		Tables: j.BaseTables,
 	}
 	for _, col := range qr.Columns {
 		name := col.Name

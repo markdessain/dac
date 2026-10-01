@@ -18,7 +18,7 @@ These flags apply to all commands:
 |---------|-------------|
 | [`init`](/commands/init) | Create a new DAC project |
 | [`serve`](/commands/serve) | Start development server with live reload |
-| [`build`](/commands/build) | Build static dashboard with baked-in query results |
+| [`build`](/commands/build) | Build static dashboard with baked-in or dynamic (DuckDB-WASM) query results |
 | [`validate`](/commands/validate) | Validate dashboard definitions |
 | [`check`](/commands/check) | Validate and execute all queries |
 | [`ls`](/commands/ls) | List discovered dashboards |
